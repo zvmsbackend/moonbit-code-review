@@ -15,7 +15,7 @@ When splitting code into multiple files and packages, it's important to ensure t
 
 ## Package with Multiple Targets
 
-MoonBit has four target backends: `wasm` (including `wasm-gc`), `native`, `js` and `llvm`, among which `wasm`, `native` and `js` are the most commonly used ones. Some language features are restricted to specific targets, notable `extern` FFI functions. To support multiple targets in a single package, we can use conditional compilation with `#cfg` attributes to include or exclude code based on the target platform. This allows us to maintain a single codebase while still supporting multiple backends. As the number of `#cfg` attributes increases, it's worth considering splitting the code into separate files and conditionally compile them with `targets` option in `moon.pkg` file. Here is an example of how to use conditional compilation to support multiple targets in a single package:
+MoonBit has four target backends: `wasm` (including `wasm-gc`), `native`, `js` and `llvm`, among which `wasm`, `native` and `js` are the most commonly used ones. Some language features are restricted to specific targets, notably `extern` FFI functions. To support multiple targets in a single package, we can use conditional compilation with `#cfg` attributes to include or exclude code based on the target platform. This allows us to maintain a single codebase while still supporting multiple backends. As the number of `#cfg` attributes increases, it's worth considering splitting the code into separate files and conditionally compile them with `targets` option in `moon.pkg` file. Here is an example of how to use conditional compilation to support multiple targets in a single package:
 
 ```
 - lib
@@ -38,6 +38,8 @@ options(
 ```
 
 When the package support exactly one target, it's still recommended to conditionally compile the files as mentioned above, to make packages that import this package compile on other targets, as MoonBit does not support conditional import yet.
+
+Be careful when the public interface of the package diverges between different targets, as this can lead to confusion and maintenance issues. In such cases, it's important to clearly document the differences in the public interface for each target and ensure that the code is organized in a way that makes it easy for developers to understand which parts of the code are relevant for each target. Avoid such inconsistency unless you have a good reason to do so.
 
 ## Internal Packages
 
@@ -137,7 +139,7 @@ fn init {
 }
 ```
 
-As seen above, optional parameters with default values in function definitions require the caller to explicitly wrap the argument in `Some` when calling the function, while optional parameters without default values can be passed directly without wrapping. This may confuse developers who use the function. `bar` style should be preferred over `baz` style when the default value is `None`.
+From a language-mechanism perspective, `arg? : T` and `arg? : T? = None` have the same in-function semantics (`T?` with default `None`), but they are not equivalent at call sites: `arg? : T` supports auto-wrapping (`arg=v`), while `arg? : T? = None` forces explicit `Some(v)` in common value-passing cases. Therefore, `arg? : T? = None` is discouraged unless explicit `T?` passing is truly required by the API surface.
 
 ## Prefer Checked Errors Over `Result`s
 
@@ -153,7 +155,7 @@ In MoonBit there are mainly two ways to achieve dynamic dispatch: using trait ob
 
 ## Re-export Declarations In The Root Package
 
-When your module cantains multiple packages, and the users need to import multiple packages to use the module, it's a good practice to re-export the necessary components in the root package with `pub using` statement. This can help simplify the import statements for users and make it easier for them to access the functionality provided by the module. Additionally, it can help improve code organization and maintainability by centralizing the public interface of the module in a single location.
+When your module contains multiple packages, and the users need to import multiple packages to use the module, it's a good practice to re-export the necessary components in the root package with `pub using` statement. This can help simplify the import statements for users and make it easier for them to access the functionality provided by the module. Additionally, it can help improve code organization and maintainability by centralizing the public interface of the module in a single location.
 
 ## Prefer Methods Over Functions
 
@@ -410,13 +412,15 @@ fn find_available(items: Array[Item]) -> Item? {
 }
 ```
 
+MoonBit supports the so-called "error polymorphism", so it doesn't matter if the higher-order function passed to iterator methods can fail or not. However, if the computation is async, MoonBit currently cannot automatically derive an async version of the method, so an explicit loop is still required in such cases.
+
 ## Prefer `Iter2` Over Manual Indexing
 
-The left hand side of MoonBit foreach loops can optionally receive two values, in the which case MoonBit calls the `iter2()` method on the iterated collection instead of `iter()`. This allows you to access both the index and the value of each item in the collection without needing to manually manage an index variable. When you find yourself needing to access both the index and the value of items in a collection, it's a good idea to consider using `Iter2` instead of manual indexing. This can help improve readability and maintainability, as well as reduce the likelihood of bugs caused by off-by-one errors or other issues related to manual indexing. Here's an example of how to use `Iter2`:
+The left hand side of MoonBit foreach loops can optionally receive two values, in which case MoonBit calls the `iter2()` method on the iterated collection instead of `iter()`. This allows you to access both the index and the value of each item in the collection without needing to manually manage an index variable. When you find yourself needing to access both the index and the value of items in a collection, it's a good idea to consider using `Iter2` instead of manual indexing. This can help improve readability and maintainability, as well as reduce the likelihood of bugs caused by off-by-one errors or other issues related to manual indexing. Here's an example of how to use `Iter2`:
 
 ```moonbit nocheck
 // bad
-for i in 0..items.length() {
+for i in 0..<items.length() {
   let item = items[i]
   // use i and item
 }
@@ -433,7 +437,7 @@ Most built-in collections provide a `rev_iter()` method that allows you to itera
 
 ```moonbit nocheck
 // bad
-for i = items.length() - 1; i >= 0; i-- {
+for i = items.length() - 1; i >= 0; i = i - 1 {
   let item = items[i]
   // use item
 }
@@ -451,6 +455,21 @@ In MoonBit, you can use `mut` variables or `Ref`s to achieve mutability. However
 ## Write `...` Placeholder For Unimplemented Code
 
 When you find some functionality partially implemented, it's a good practice to use `...` as a placeholder for the unimplemented code. This can help signal to developers that the code is not yet complete and should be implemented in the future by emitting compile-time warnings. Additionally, using `...` can help improve readability and maintainability by making it clear which parts of the code are still under development and need attention.
+
+## Labelled/Optional Argument Evaluation Semantics
+
+In MoonBit, labelled arguments can be supplied in any order at call sites, but argument evaluation still follows the parameter declaration order. For optional arguments, the default expression is evaluated every time that argument is omitted.
+
+Because of this, code review should reject APIs that rely on call-site argument order side effects, and should avoid side effects in optional default expressions. Keep defaults pure whenever possible. If shared state is needed across calls, lift it to a toplevel `let` and use that binding as the default value.
+
+```moonbit nocheck
+let default_counter : Ref[Int] = { val: 0 }
+
+fn incr(counter? : Ref[Int] = default_counter) -> Int {
+  counter.val = counter.val + 1
+  counter.val
+}
+```
 
 # Testing
 
