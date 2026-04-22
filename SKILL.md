@@ -45,6 +45,10 @@ Be careful when the public interface of the package diverges between different t
 
 Sometimes a package is only intended to be used internally within a module, and should not be exposed as part of the public API. In such cases, it's a good practice to place the package in an `internal` directory within the module. This can help signal to developers that the package is not intended for external use and should only be used within the module.
 
+## `usings` File
+
+MoonBit `using` statements are scoped to the whole package, not just the file they are declared in. If a package contains some `using`s that are shared by multiple files, it's a good practice to put these `using`s in a separate `usings.mbt` file. This can help improve code organization and maintainability by centralizing the `using` statements in a single location, making it easier to manage dependencies and avoid duplication.
+
 # Package Interface
 
 ## Restrict the public interface of a package
